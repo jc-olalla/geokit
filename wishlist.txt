@@ -3,3 +3,6 @@ wishlist:
 - easy import of pdok, spotinfo, geo4oov
 - distance / route analysis
 - upload functionality to esri web portal and database
+
+
+connect geoviewer to analysis tools
