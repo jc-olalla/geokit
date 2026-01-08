@@ -1,0 +1,5 @@
+wishlist:
+- geocoder for addresses
+- easy import of pdok, spotinfo, geo4oov
+- distance / route analysis
+- upload functionality to esri web portal and database
