@@ -11,6 +11,7 @@ dependencies = [
     "geopandas",
     "requests",
     "matplotlib",
+    "PyYAML"
 ]
 
 [tool.setuptools.packages.find]

@@ -1,13 +1,19 @@
 """Functions for reading and writing geographic data."""
 
+import inspect
+import tomllib
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 
 import geopandas as gpd
+import pandas as pd
 import requests
-import xml.etree.ElementTree as ET
+import yaml
+from matplotlib.figure import Figure
 
-import tomllib
-from geokit.spatial import validate_boundary, subset_spatial
+from geokit.spatial import subset_spatial, validate_boundary
 
 
 def read_wfs(
@@ -204,3 +210,115 @@ def get_wfs_layer_info(url, layer, auth=None):
         }
 
     raise ValueError(f"Layer '{layer}' not found in WFS service")
+
+
+def _resolve_writer(path, writer):
+    """Select and validate the writer for the output path."""
+    if writer is None:
+        extension = path.suffix.lower()
+
+        if extension == ".csv":
+
+            def writer(obj, path, **kw):
+                kw.setdefault("index", False)
+                obj.to_csv(path, **kw)
+
+        elif extension in {".gpkg", ".geojson", ".shp"}:
+
+            def writer(obj, path, **kw):
+                obj.to_file(path, **kw)
+
+        elif extension in {".png", ".pdf", ".svg"}:
+
+            def writer(obj, path, **kw):
+                obj.savefig(path, **kw)
+
+        else:
+            raise ValueError(f"Unsupported output format: {extension}")
+
+    if not callable(writer):
+        raise TypeError("writer must be callable")
+
+    return writer
+
+
+def write(
+    obj,
+    path,
+    metadata=None,
+    script=None,
+    project_root=None,
+    writer=None,
+    lineage=None,
+    **kwargs,
+):
+    """
+    Write an object to a file and create or update its metadata.
+
+    Built-in formats:
+        CSV (.csv):                  obj.to_csv()
+        GIS (.gpkg, .geojson, .shp): obj.to_file()
+        Figures (.png, .pdf, .svg):  obj.savefig()
+
+    Other formats can be supported through a custom writer.
+
+    Parameters
+    ----------
+    obj : object
+        Object to write, such as a DataFrame, GeoDataFrame, or Figure.
+    path : str or Path
+        Output file path.
+    metadata : dict, optional
+        Descriptive metadata (e.g., title, description, author).
+        Existing descriptive fields are preserved unless overwritten.
+    script : str or Path, optional
+        Generating script. Automatically detected if omitted.
+    project_root : str or Path, optional
+        Root directory used to make the script path relative.
+        Defaults to the generating script's parent directory.
+    writer : callable, optional
+        Custom function with signature writer(obj, path, **kwargs).
+        Overrides the built-in format selection.
+    lineage : str or Path, optional
+        Path to the lineage document, relative to the metadata file.
+        Defaults to None when no lineage has been generated.
+    **kwargs
+        Additional arguments passed to the selected writer.
+
+    Returns
+    -------
+    pathlib.Path
+        Path to the written output.
+    """
+    path = Path(path)
+
+    writer = _resolve_writer(path, writer)
+
+    # Identify generating script
+    script = Path(script or inspect.stack()[1].filename).resolve()
+    project_root = Path(project_root).resolve() if project_root else script.parent
+    script_relative = script.relative_to(project_root).as_posix()
+
+    # Create output directory and write file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer(obj, path, **kwargs)
+
+    # TODO: Integrate automatic analytical provenance via @gk.trace.
+    # Retrieve the lineage document associated with this output from
+    # the current execution context (e.g., get_current_lineage(path)).
+    # Explicit lineage takes precedence over automatically generated lineage.
+
+    origin = {
+        **(metadata or {}),
+        "script": script_relative,
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "lineage": Path(lineage).as_posix() if lineage is not None else None,
+    }
+
+    meta_path = path.with_suffix(".meta.yml")
+    meta_path.write_text(
+        yaml.safe_dump({"origin": origin}, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    return path
